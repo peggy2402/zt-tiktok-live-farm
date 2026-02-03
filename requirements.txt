@@ -1,0 +1,18 @@
+# requirements.txt
+PyQt6>=6.5.0
+
+# iOS 15.x support
+tidevice>=0.9.14
+facebook-wda>=1.4.5
+
+# iOS 17+ support
+pymobiledevice3>=4.2.0
+requests>=2.31.0
+
+# SSH/SCP support
+paramiko>=3.3.0
+scp>=0.14.0
+
+# Utilities
+psutil>=5.9.0
+pillow>=10.0.0

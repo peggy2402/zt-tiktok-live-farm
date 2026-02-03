@@ -1,0 +1,63 @@
+=== HƯỚNG DẪN KẾT NỐI IPHONE VÀO WSL ===
+
+WSL không tự động nhận diện thiết bị USB cắm vào máy tính.
+Bạn cần thực hiện các bước sau trên PowerShell (Windows) với quyền Admin:
+
+1. Liệt kê danh sách thiết bị USB:
+   usbipd list
+
+2. Tìm dòng chứa "Apple Mobile Device" hoặc iPhone của bạn. Ghi nhớ BUSID (ví dụ: 1-6).
+
+3. Gắn thiết bị vào WSL (Lần đầu tiên):
+   # Thêm --force để giành quyền điều khiển từ Windows (iTunes/Photos)
+   usbipd bind --busid 1-6 --force
+   usbipd attach --wsl --busid 1-6
+
+4. Nếu đã bind rồi, các lần sau chỉ cần attach:
+   usbipd attach --wsl --busid 1-6
+
+5. Kiểm tra trong WSL:
+   Mở terminal WSL và gõ: lsusb
+   -> Nếu thấy dòng "Apple, Inc. Mobile Device" là thành công.
+
+6. Sau khi attach xong, chạy tool: python main.py
+
+=== KHẮC PHỤC LỖI "Device busy (exported)" ===
+Lỗi: "WSL usbip: error: Attach Request for ... failed - Device busy (exported)"
+Nghĩa là Windows (iTunes/Photos) đang tranh giành thiết bị hoặc trạng thái bind cũ bị kẹt.
+Hãy làm theo thứ tự:
+1. Đóng hoàn toàn iTunes, Photos, 3uTools.
+2. Rút cáp iPhone ra và cắm lại.
+3. Chạy lệnh unbind để xóa trạng thái cũ (quan trọng):
+   usbipd unbind --busid <BUSID>
+4. Bind lại với quyền force:
+   usbipd bind --busid <BUSID> --force
+5. Attach lại:
+   usbipd attach --wsl --busid <BUSID>
+6. Nếu vẫn báo lỗi hoặc cảnh báo "reboot required", hãy khởi động lại máy tính.
+7. KHỞI ĐỘNG LẠI NẾU SCAN DEVICES KHÔNG THẤY THIẾT BỊ NÀO THÌ CHẠY 2 LỆNH:
+sudo service usbmuxd restart
+./scripts/setup_udev.sh
+
+=== KHẮC PHỤC LỖI "There is no WSL 2 distribution running" ===
+Lỗi này xuất hiện khi WSL (Ubuntu) đang tắt hoặc ngủ đông.
+Cách sửa:
+1. Mở ứng dụng Ubuntu (hoặc gõ `wsl` trong Command Prompt/Terminal).
+2. Giữ cửa sổ Ubuntu đó mở (đừng tắt).
+3. Quay lại PowerShell và chạy lại lệnh `usbipd attach ...`.
+
+=== KHẮC PHỤC LỖI SIDELOADLY "LOCKDOWN_E_INVALID_HOST_ID" ===
+Lỗi này có nghĩa là máy tính và iPhone không còn "tin tưởng" nhau.
+
+1. Trên iPhone:
+   - Rút cáp khỏi máy tính.
+   - Vào Cài đặt > Cài đặt chung > Chuyển hoặc Đặt lại iPhone.
+   - Chọn "Đặt lại" -> "Đặt lại Vị trí & Quyền riêng tư".
+
+2. Trên Windows:
+   - Mở File Explorer, dán vào thanh địa chỉ: %ProgramData%\Apple\Lockdown
+   - Xóa tất cả các file trong thư mục đó.
+
+3. Kết nối lại:
+   - Cắm lại iPhone vào máy tính. Màn hình iPhone sẽ hỏi "Tin cậy Máy tính này?". Bấm "Tin cậy".
+   - Bây giờ hãy thử lại Sideloadly.

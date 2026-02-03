@@ -1,0 +1,16 @@
+#!/bin/bash
+echo "=== HƯỚNG DẪN KHẮC PHỤC LỖI WDA BỊ CRASH/ĐÓNG ==="
+echo "Nếu mở app WebDriverAgentRunner trên điện thoại bị văng ngay lập tức:"
+echo ""
+echo "1. BẬT DEVELOPER MODE (Bắt buộc iOS 16+):"
+echo "   Settings -> Privacy & Security -> Developer Mode -> ON (Khởi động lại máy)."
+echo ""
+echo "2. TIN CẬY ỨNG DỤNG:"
+echo "   Settings -> General -> VPN & Device Management -> Chọn Email -> Trust."
+echo ""
+echo "3. NẾU VẪN BỊ: CHỨNG CHỈ ĐÃ HẾT HẠN HOẶC SAI BUNDLE ID"
+echo "   - Cần cài lại WDA bằng Xcode (Product -> Test) hoặc Sideloadly."
+echo "   - Đảm bảo Bundle ID trong config/settings.py khớp với app."
+echo "==================================================="
+
+read -p "Press Enter to exit..."

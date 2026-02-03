@@ -1,0 +1,4 @@
+/* ui/styles.qss */
+QMainWindow {
+    background-color: #2c3e50;
+}

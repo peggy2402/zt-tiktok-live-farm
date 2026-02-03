@@ -1,0 +1,55 @@
+/* ui/styles.qss */
+QMainWindow {
+    background-color: #1e1e1e;
+}
+
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+/* Style cho từng ô điện thoại */
+QFrame#DeviceCard {
+    background-color: #2d2d2d;
+    border-radius: 10px;
+    border: 1px solid #3d3d3d;
+}
+
+QFrame#DeviceCard:hover {
+    border: 1px solid #3498db;
+    background-color: #353535;
+}
+
+/* Nút bấm chung */
+QPushButton {
+    background-color: #3498db;
+    color: white;
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #2980b9;
+}
+
+QPushButton#StopButton {
+    background-color: #e74c3c;
+}
+
+QPushButton#StopButton:hover {
+    background-color: #c0392b;
+}
+
+/* Sidebar bên trái */
+QWidget#Sidebar {
+    background-color: #252526;
+    border-right: 1px solid #333;
+}
+
+QPlainTextEdit#LogConsole {
+    background-color: #1c1c1c;
+    color: #dcdcdc;
+    border: 1px solid #3d3d3d;
+    border-radius: 5px;
+}
