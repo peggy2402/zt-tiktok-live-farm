@@ -1,302 +1,429 @@
-# ui/main_window.py (phần quan trọng)
-import threading
-import time
 import json
-import sys
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QScrollArea, QPushButton, QLabel, QMessageBox, QPlainTextEdit, QSplitter)
-from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
-from core.device_manager import DeviceManager, DeviceController
+import time
+import platform
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+                             QScrollArea, QPushButton, QLabel, QPlainTextEdit, QSplitter,
+                             QStackedWidget, QListWidget, QListWidgetItem, QFrame, QSizePolicy)
+from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QColor, QTextCharFormat
+
+from core.device_manager import DeviceManager, DeviceController
 from core.unified_client import UnifiedClient
 from ui.device_widget import DeviceWidget
-from config.settings import REMOTE_VIDEO_PATH
+from ui.resources import get_icon # Import the new icon loader
 
 class ScanThread(QThread):
-    """Luồng quét thiết bị chạy ngầm để không làm đơ UI"""
+    """Runs the device scan in a background thread to keep the UI responsive."""
     devices_found = pyqtSignal(list)
 
     def run(self):
-        # Gọi hàm scan (có thể mất nhiều thời gian)
         devices = DeviceManager.scan_devices()
         self.devices_found.emit(devices)
+
+class AttachUsbThread(QThread):
+    """Runs the USB attach process in background."""
+    log_message = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    def run(self):
+        DeviceManager.wsl_attach_usb_devices(logger=self.log_message.emit)
+        self.finished.emit()
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TikTok Live Farm Control")
-        self.resize(1100, 800)
-        self.devices = {}  # {udid: {"controller": DeviceController, "client": UnifiedClient}}
-        self.init_ui()
-        
-        # Tự động load thiết bị đã lưu
-        QTimer.singleShot(1000, self.load_devices_from_json)
-    
-    def init_ui(self):
-        """Khởi tạo giao diện chính"""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Main Layout
-        main_layout = QVBoxLayout(central_widget)
-        
-        # Toolbar / Header Buttons
-        header_layout = QHBoxLayout()
-        
-        self.btn_scan = QPushButton("🔄 Scan Devices")
-        self.btn_scan.clicked.connect(self.scan_and_add_devices)
-        header_layout.addWidget(self.btn_scan)
-        
-        btn_start_all = QPushButton("▶ Start All")
-        btn_start_all.clicked.connect(self.start_all_devices)
-        header_layout.addWidget(btn_start_all)
-        
-        btn_live_all = QPushButton("🎥 Live All")
-        btn_live_all.clicked.connect(self.start_live_streams)
-        header_layout.addWidget(btn_live_all)
-        
-        header_layout.addStretch()
-        main_layout.addLayout(header_layout)
-        
-        # Tạo một splitter để có thể thay đổi kích thước vùng log
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.setWindowTitle("ZT TikTok Live Farm")
+        self.setWindowIcon(get_icon("logo.svg")) # App icon
+        self.resize(1280, 850)
+        self.devices = {}
 
-        # Scroll Area chứa danh sách thiết bị (phần trên)
+        # --- Dark Theme Style Constants ---
+        self.SIDEBAR_BG = "#121212"
+        self.SIDEBAR_TEXT = "#B0BEC5"
+        self.SIDEBAR_HOVER = "#263238"
+        self.CONTENT_BG = "#181818" # Deep Dark content background
+        self.PRIMARY_COLOR = "#2196F3"
+        self.TEXT_COLOR = "#E0E0E0" # General light text color
+
+        self.init_ui()
+        QTimer.singleShot(500, self.load_devices_from_json)
+
+    def init_ui(self):
+        """Initializes the main UI with a sidebar and content area."""
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # --- Right Content Area (must be created before sidebar which connects to it) ---
+        content_container = QWidget()
+        content_container.setStyleSheet(f"background-color: {self.CONTENT_BG}; color: {self.TEXT_COLOR};")
+        content_layout = QVBoxLayout(content_container)
+        self.pages = QStackedWidget()
+        content_layout.addWidget(self.pages)
+
+        # --- Left Sidebar ---
+        sidebar_container = self.setup_sidebar()
+        main_layout.addWidget(sidebar_container)
+        main_layout.addWidget(content_container)
+
+        # --- Populate Pages ---
+        self.page_dashboard = QWidget()
+        self.setup_dashboard_ui(self.page_dashboard)
+        self.pages.addWidget(self.page_dashboard)
+
+        self.page_config = QLabel("Configuration Page (Coming Soon)")
+        self.page_config.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_config.setFont(QFont("Segoe UI", 12))
+        self.pages.addWidget(self.page_config)
+
+        self.menu_list.setCurrentRow(0)
+
+    def setup_sidebar(self):
+        """Creates the left sidebar widget and returns it."""
+        self.sidebar_container = QWidget()
+        self.sidebar_container.setFixedWidth(220)
+        self.sidebar_container.setStyleSheet(f"background-color: {self.SIDEBAR_BG}; border-right: 1px solid #333;")
+        sidebar_layout = QVBoxLayout(self.sidebar_container)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        # Toggle Button (Hamburger)
+        self.btn_toggle_menu = QPushButton("☰")
+        self.btn_toggle_menu.setFixedSize(40, 40)
+        self.btn_toggle_menu.setStyleSheet("border: none; color: white; font-size: 20px; background: transparent;")
+        self.btn_toggle_menu.clicked.connect(self.toggle_sidebar)
+        
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(self.btn_toggle_menu)
+        
+        lbl_title = QLabel("ZT TIKTOK FARM")
+        self.lbl_title = lbl_title # Save ref to hide when collapsed
+        lbl_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        lbl_title.setStyleSheet(f"""
+            padding: 15px 0; 
+            color: {self.PRIMARY_COLOR}; 
+        """)
+        header_layout.addWidget(lbl_title)
+        header_layout.addStretch()
+        
+        sidebar_layout.addLayout(header_layout)
+
+        self.menu_list = QListWidget()
+        self.menu_list.setFrameShape(QFrame.Shape.NoFrame)
+        self.menu_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.menu_list.setStyleSheet(f"""
+            QListWidget {{ background-color: {self.SIDEBAR_BG}; border: none; }}
+            QListWidget::item {{ padding: 12px; color: {self.SIDEBAR_TEXT}; border-left: 3px solid transparent; }}
+            QListWidget::item:selected, QListWidget::item:hover {{ 
+                background-color: {self.SIDEBAR_HOVER};
+                border-left-color: {self.PRIMARY_COLOR};
+                color: white;
+            }}
+        """)
+        self.add_menu_item("Dashboard", "dashboard.svg")
+        self.add_menu_item("Configuration", "settings.svg")
+        self.menu_list.currentRowChanged.connect(self.pages.setCurrentIndex)
+        sidebar_layout.addWidget(self.menu_list)
+
+        sidebar_layout.addStretch()
+
+        lbl_version = QLabel("v2.2.0-dark")
+        self.lbl_version = lbl_version
+        lbl_version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_version.setStyleSheet("color: #7f8c8d; padding: 10px;")
+        sidebar_layout.addWidget(lbl_version)
+        
+        return self.sidebar_container
+
+    def toggle_sidebar(self):
+        """Animates the sidebar width."""
+        width = self.sidebar_container.width()
+        new_width = 60 if width == 220 else 220
+        
+        # --- Text Visibility Logic (Clean Look) ---
+        # Khi đóng: Text màu trong suốt (ẩn). Khi mở: Text màu bình thường.
+        text_color = "transparent" if new_width == 60 else self.SIDEBAR_TEXT
+        self.menu_list.setStyleSheet(f"""
+            QListWidget {{ background-color: {self.SIDEBAR_BG}; border: none; }}
+            QListWidget::item {{ padding: 12px; color: {text_color}; border-left: 3px solid transparent; }}
+            QListWidget::item:selected, QListWidget::item:hover {{ 
+                background-color: {self.SIDEBAR_HOVER}; border-left-color: {self.PRIMARY_COLOR}; color: {text_color if new_width == 60 else 'white'};
+            }}
+        """)
+
+        self.anim = QPropertyAnimation(self.sidebar_container, b"minimumWidth")
+        self.anim.setDuration(250)
+        self.anim.setStartValue(width)
+        self.anim.setEndValue(new_width)
+        self.anim.setEasingCurve(QEasingCurve.Type.InOutQuart)
+        self.anim.start()
+        
+        # Hacky way to animate max width too
+        self.sidebar_container.setFixedWidth(new_width) # This snaps, animation needs layout handling
+        # Better approach for fixed layout:
+        self.anim_max = QPropertyAnimation(self.sidebar_container, b"maximumWidth")
+        self.anim_max.setDuration(250)
+        self.anim_max.setStartValue(width)
+        self.anim_max.setEndValue(new_width)
+        self.anim_max.start()
+
+        # Hide/Show text elements
+        is_collapsed = new_width == 60
+        self.lbl_title.setVisible(not is_collapsed)
+        self.lbl_version.setVisible(not is_collapsed)
+
+    def add_menu_item(self, text, icon_name):
+        item = QListWidgetItem(get_icon(icon_name), text)
+        item.setFont(QFont("Segoe UI", 11))
+        self.menu_list.addItem(item)
+
+    def setup_dashboard_ui(self, parent_widget):
+        """Creates the main dashboard UI with controls, grid, and log."""
+        layout = QVBoxLayout(parent_widget)
+        
+        # --- Top Control Bar ---
+        control_bar = QHBoxLayout()
+        self.btn_scan = QPushButton(" Scan Devices")
+        self.btn_scan.setIcon(get_icon("scan.svg"))
+        self.btn_scan.clicked.connect(self.scan_and_add_devices)
+        control_bar.addWidget(self.btn_scan)
+
+        self.btn_attach = QPushButton(" Attach USB (WSL)")
+        self.btn_attach.setIcon(get_icon("usb.svg")) # Icon USB nếu có, hoặc mặc định
+        self.btn_attach.clicked.connect(self.attach_usb_wsl)
+        
+        # Chỉ hiện nút Attach USB nếu đang chạy trên Linux/WSL
+        if platform.system() == "Linux":
+            control_bar.addWidget(self.btn_attach)
+
+        btn_start_all = QPushButton(" Start All")
+        btn_start_all.setIcon(get_icon("start_all.svg"))
+        btn_start_all.clicked.connect(self.start_all_devices)
+        control_bar.addWidget(btn_start_all)
+
+        btn_stop_all = QPushButton(" Stop All")
+        btn_stop_all.setIcon(get_icon("stop_all.svg"))
+        btn_stop_all.clicked.connect(self.stop_all_devices)
+        control_bar.addWidget(btn_stop_all)
+
+        control_bar.addStretch()
+        layout.addLayout(control_bar)
+
+        # --- Devices Grid and Log Splitter ---
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("background-color: transparent; border: none;")
+        
         self.devices_container = QWidget()
-        self.devices_layout = QHBoxLayout(self.devices_container)
-        self.devices_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.devices_container.setStyleSheet("background-color: transparent;")
+        self.devices_grid = QGridLayout(self.devices_container)
+        self.devices_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.devices_container)
         splitter.addWidget(self.scroll)
-
-        # Bảng Log (phần dưới)
+        
         self.log_console = QPlainTextEdit()
         self.log_console.setReadOnly(True)
-        self.log_console.setObjectName("LogConsole")
-        self.log_console.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        font = QFont("Consolas", 10) # Dùng font monospaced cho đẹp
-        self.log_console.setFont(font)
+        self.log_console.setStyleSheet(f"""
+            background-color: #111;
+            color: {self.TEXT_COLOR};
+            font-family: Consolas, monospace;
+            border-top: 1px solid #333;
+            border-radius: 5px;
+        """)
         splitter.addWidget(self.log_console)
-
-        # Đặt kích thước ban đầu cho 2 phần
-        splitter.setSizes([600, 200])
-
-        main_layout.addWidget(splitter)
-
-    def add_device(self, udid, name, version):
-        """Hàm thêm thiết bị thủ công (được gọi từ main.py)"""
-        # Tự động đoán engine dựa trên version nếu không có info
-        engine = "tidevice"
-        try:
-            if float(version.split('.')[0]) >= 17:
-                engine = "pymobile"
-        except:
-            pass
-            
-        # Giả lập cấu trúc dữ liệu giống như scan được
-        device_info = {
-            "udid": udid,
-            "name": name,
-            "version": version,
-            "engine": engine
-        }
         
-        # Tận dụng logic thêm thiết bị
-        self._process_add_device(device_info)
+        splitter.setSizes([500, 200])
+        layout.addWidget(splitter)
+        
+        # Apply stylesheet to buttons
+        for btn in [self.btn_scan, self.btn_attach, btn_start_all, btn_stop_all]:
+            btn.setFixedHeight(40)
+            btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.btn_scan.setStyleSheet("background-color: #1976D2; color: white; border-radius: 4px;")
+        self.btn_attach.setStyleSheet("background-color: #7B1FA2; color: white; border-radius: 4px;") 
+        btn_start_all.setStyleSheet("background-color: #388E3C; color: white; border-radius: 4px;")
+        btn_stop_all.setStyleSheet("background-color: #D32F2F; color: white; border-radius: 4px;")
+
+    def append_log(self, message: str):
+        """Adds a message to the system log console with appropriate color."""
+        color = "#ecf0f1"  # Default
+        if "[ERROR]" in message or "fail" in message.lower(): color = "#e74c3c"
+        elif "[OK]" in message or "success" in message.lower() or "ready" in message.lower(): color = "#2ecc71"
+        elif "[*]" in message or "wait" in message.lower() or "scan" in message.lower(): color = "#f1c40f"
+        
+        self.log_console.appendHtml(f"<font color='{color}'><b>{time.strftime('%H:%M:%S')} |</b> {message}</font>")
+        self.log_console.ensureCursorVisible()
+
+    # --- Device Management Logic ---
 
     def scan_and_add_devices(self):
-        """Quét và thêm thiết bị tự động (Chạy ngầm)"""
         self.btn_scan.setEnabled(False)
-        self.btn_scan.setText("Scanning...")
-        self.append_log("[*] Scanning for devices...")
+        self.btn_scan.setText(" Scanning...")
+        self.append_log("[*] Scanning for connected devices...")
         
         self.scan_thread = ScanThread()
         self.scan_thread.devices_found.connect(self.on_scan_finished)
         self.scan_thread.start()
 
-    def on_scan_finished(self, devices):
-        """Xử lý kết quả sau khi quét xong"""
-        self.btn_scan.setEnabled(True)
-        self.btn_scan.setText("🔄 Scan Devices")
+    def attach_usb_wsl(self):
+        self.btn_attach.setEnabled(False)
+        self.btn_attach.setText(" Attaching...")
+        self.append_log("[*] Bắt đầu quy trình Attach USB từ Windows...")
         
-        if not devices:
-            self.append_log("[SCAN ERROR] No devices found via tidevice.")
-            self.append_log("[HINT] Quick Fix: Run 'sudo service usbmuxd restart' in terminal.")
-            self.append_log("[HINT] Permanent Fix: Run './scripts/setup_udev.sh' then restart WSL.")
+        self.attach_thread = AttachUsbThread()
+        self.attach_thread.log_message.connect(self.append_log)
+        self.attach_thread.finished.connect(lambda: self.btn_attach.setEnabled(True))
+        self.attach_thread.finished.connect(lambda: self.btn_attach.setText(" Attach USB (WSL)"))
+        self.attach_thread.start()
 
-        for device in devices:
+    def on_scan_finished(self, found_devices):
+        self.btn_scan.setEnabled(True)
+        self.btn_scan.setText(" Scan Devices")
+        if not found_devices:
+            self.append_log("[ERROR] No devices found. Check connection and drivers.")
+            return
+            
+        self.append_log(f"[*] Found {len(found_devices)} device(s).")
+        for device in found_devices:
             self._process_add_device(device)
         self.save_devices_to_json()
 
-    def _process_add_device(self, device):
-        """Xử lý logic thêm thiết bị vào danh sách quản lý"""
-        udid = device["udid"]
-        if udid not in self.devices:
-            # Tạo controller với engine phù hợp
-            controller = DeviceController(
-                udid=udid,
-                version=device["version"],
-                engine=device["engine"],
-                port_offset=len(self.devices)  # Mỗi device 1 port riêng
-            )
-            
-            # Tạo client thống nhất
-            client = UnifiedClient(
-                port=controller.wda_port,
-                engine=device["engine"],
-                udid=udid
-            )
-            
-            self.devices[udid] = {
-                "info": device,
-                "controller": controller,
-                "client": client,
-                "status": "disconnected"
-            }
-            
-            self.add_device_to_ui(device)
-    
-    def add_device_to_ui(self, device):
-        """Tạo Widget hiển thị cho thiết bị"""
-        udid = device["udid"]
-        if udid in self.devices:
-            # Lấy port offset đã tính toán
-            controller = self.devices[udid]["controller"]
-            client = self.devices[udid]["client"]
-            port_offset = controller.wda_port - 8100
-            
-            # Tạo Widget từ ui/device_widget.py
-            widget = DeviceWidget(
-                udid=udid,
-                name=device.get("name", "iPhone"),
-                version=device["version"],
-                index=port_offset,
-                controller=controller,
-                client=client
-            )
-            
-            # Lưu tham chiếu widget vào dict devices để update sau này
-            self.devices[udid]["widget"] = widget
-            
-            # Kết nối tín hiệu log từ widget con lên bảng log chính
-            widget.log_message.connect(self.append_log)
-            
-            self.devices_layout.addWidget(widget)
+    def _process_add_device(self, device_info):
+        udid = device_info["udid"]
+        
+        # [FILTER] Tạm thời bỏ qua iOS 17+ (iPhone SE) vì chưa có Mac
+        # Giúp hệ thống tập trung vào 5 máy iPhone 7 đang ổn định
+        version = device_info.get("version", "Unknown")
+        try:
+            if version and version[0].isdigit() and int(version.split('.')[0]) >= 17:
+                self.append_log(f"[-] Skipped {udid} (iOS {version}) - High OS version (No Mac).")
+                return
+        except Exception:
+            pass
 
-    def append_log(self, message: str):
-        """Thêm message vào bảng log với màu sắc tương ứng."""
-        # Phân loại màu sắc dựa trên nội dung log
-        color = QColor("#dcdcdc") # Mặc định (trắng xám)
-        if "[ERROR]" in message or "failed" in message.lower() or "Fail" in message or "[SCAN ERROR]" in message:
-            color = QColor("#e74c3c") # Đỏ
-        elif "[OK]" in message or "success" in message.lower() or "Connected" in message:
-            color = QColor("#2ecc71") # Xanh lá
-        elif "[*]" in message or "Starting" in message or "Waiting" in message or "[HINT]" in message:
-            color = QColor("#f1c40f") # Vàng
-        elif "[PYMOBILE]" in message or "[TIDEVICE]" in message:
-            color = QColor("#3498db") # Xanh dương
+        if udid in self.devices:
+            self.append_log(f"[*] Device {udid[:8]}... already in view.")
+            return
+
+        controller = DeviceController(
+            udid=udid,
+            # Fallback version logic if tidevice returns Unknown
+            version=device_info.get("version", "15.0"), 
+            engine=device_info.get("engine", "tidevice3"),
+            port_offset=len(self.devices)
+        )
         
-        char_format = QTextCharFormat()
-        char_format.setForeground(color)
+        # Special handling for known iOS 18 device (Manual override if needed)
+        # You can add a check here if you know the specific UDID of your iPhone SE
+        # if udid == "YOUR_IPHONE_SE_UDID":
+        #     controller.major_version = 18
+
+        client = UnifiedClient(port=controller.wda_port, udid=udid)
         
-        cursor = self.log_console.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(f"{time.strftime('%H:%M:%S')} | ", char_format)
-        cursor.insertText(message + "\n", char_format)
-        self.log_console.ensureCursorVisible() # Tự động cuộn xuống
+        widget = DeviceWidget(controller=controller, client=client)
+        widget.log_message.connect(self.append_log)
+        # Kết nối signal xóa từ widget
+        widget.remove_clicked.connect(self.remove_device)
+        
+        # Lưu trực tiếp widget, không cần container wrapper nữa
+        self.devices[udid] = {"controller": controller, "client": client, "widget": widget, "info": device_info}
+        
+        self.refresh_grid()
+
+    def get_grid_columns(self, item_width=230):
+        return max(1, self.scroll.width() // (item_width + 10)) 
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Re-organize the grid on window resize
+        # This is complex, so we will do a simple version
+        # A better implementation would move widgets without recreating them
+        self.refresh_grid()
+
+    def start_all_devices(self):
+        for udid in self.devices:
+            self.devices[udid]["widget"].on_start_click()
+            time.sleep(0.5) # Stagger starts
+            
+    def stop_all_devices(self):
+        for udid in self.devices:
+            self.devices[udid]["widget"].on_stop_click()
+
+    def remove_device(self, udid):
+        """Xóa thiết bị khỏi danh sách, dừng process và cập nhật UI."""
+        if udid not in self.devices:
+            return
+
+        self.append_log(f"[*] Removing device {udid}...")
+        device = self.devices[udid]
+        
+        # 1. Dừng WDA và giải phóng port
+        try:
+            device["controller"].stop_wda()
+        except Exception as e:
+            self.append_log(f"[WARN] Error stopping WDA: {e}")
+
+        # 2. Xóa khỏi UI
+        widget = device.get("widget")
+        self.devices_grid.removeWidget(widget)
+        widget.deleteLater()
+        
+        # 3. Xóa khỏi bộ nhớ
+        del self.devices[udid]
+        
+        # 4. Lưu lại config và sắp xếp lại lưới
+        self.save_devices_to_json()
+        self.refresh_grid()
+        self.append_log(f"[OK] Device {udid} removed.")
+
+    def refresh_grid(self):
+        """Sắp xếp lại grid layout để lấp đầy khoảng trống."""
+        # Tạm thời gỡ tất cả widget khỏi layout (nhưng không xóa object)
+        for i in reversed(range(self.devices_grid.count())):
+            item = self.devices_grid.itemAt(i)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Thêm lại theo thứ tự
+        cols = self.get_grid_columns()
+        for i, udid in enumerate(self.devices):
+            widget = self.devices[udid]["widget"]
+            row, col = divmod(i, cols)
+            self.devices_grid.addWidget(widget, row, col)
 
     def save_devices_to_json(self):
-        """Lưu danh sách thiết bị ra file JSON"""
-        data = []
-        for udid, info in self.devices.items():
-            data.append(info["info"])
-        
+        data = [d["info"] for d in self.devices.values()]
         try:
             with open("config/devices.json", "w") as f:
                 json.dump(data, f, indent=4)
-            print("[INFO] Devices saved to config/devices.json")
         except Exception as e:
-            print(f"[ERROR] Could not save devices: {e}")
+            self.append_log(f"[ERROR] Could not save devices.json: {e}")
 
     def load_devices_from_json(self):
-        """Load thiết bị từ file JSON"""
         try:
             with open("config/devices.json", "r") as f:
-                devices = json.load(f)
-                if not devices:
-                    return
-                
-                print(f"[INFO] Loading {len(devices)} devices from config...")
-                for device in devices:
+                devices_from_file = json.load(f)
+            if devices_from_file:
+                self.append_log(f"[*] Loading {len(devices_from_file)} device(s) from config.")
+                for device in devices_from_file:
                     self._process_add_device(device)
         except FileNotFoundError:
-            pass
+            self.append_log("[*] No saved devices found. Please scan.")
         except Exception as e:
-            print(f"[ERROR] Could not load devices: {e}")
-
-    def update_device_status(self, udid, status_text):
-        """Cập nhật trạng thái lên UI"""
-        if udid in self.devices and "widget" in self.devices[udid]:
-            self.devices[udid]["widget"].lbl_status.setText(status_text)
-
-    def start_device(self, udid):
-        """Khởi động thiết bị với engine phù hợp"""
-        device_data = self.devices.get(udid)
-        if not device_data:
-            return
-        
-        controller = device_data["controller"]
-        client = device_data["client"]
-        
-        try:
-            # Khởi động engine phù hợp
-            if controller.start_processes():
-                # Kết nối client
-                if client.connect():
-                    device_data["status"] = "connected"
-                    self.update_device_status(udid, "✅ Connected")
-                    
-                    # Tự động bắt đầu warm-up
-                    QTimer.singleShot(3000, lambda: self.start_warm_up(udid))
-                else:
-                    self.update_device_status(udid, "❌ Connection failed")
-            else:
-                self.update_device_status(udid, "❌ Engine start failed")
-                
-        except Exception as e:
-            print(f"[ERROR] Failed to start device {udid}: {e}")
-            self.update_device_status(udid, "❌ Error")
-    
-    def start_warm_up(self, udid):
-        """Bắt đầu nuôi nick"""
-        if udid in self.devices:
-            client = self.devices[udid]["client"]
-            threading.Thread(target=client.warm_up_account, daemon=True).start()
-
-    def start_all_devices(self):
-        """Khởi động tất cả thiết bị - Mỗi máy dùng engine riêng"""
-        for udid in self.devices:
-            self.start_device(udid)
-            time.sleep(2)  # Tránh xung đột port
-    
-    def start_live_streams(self):
-        """Bắt đầu LIVE trên tất cả thiết bị đã kết nối"""
-        for udid, device_data in self.devices.items():
-            if device_data["status"] == "connected":
-                client = device_data["client"]
-                # Mỗi device chạy trong thread riêng
-                thread = threading.Thread(
-                    target=client.start_tiktok_live,
-                    args=(None,)  # Hoặc đường dẫn video
-                )
-                thread.daemon = True
-                thread.start()
+            self.append_log(f"[ERROR] Could not load devices.json: {e}")
 
     def closeEvent(self, event):
-        """Xử lý khi đóng cửa sổ: Dừng toàn bộ thiết bị để giải phóng port"""
-        print("[EXIT] Cleaning up processes...")
-        for udid, device in self.devices.items():
-            if "controller" in device:
-                device["controller"].stop_processes()
+        self.append_log("[*] Application closing, stopping all devices...")
+        self.stop_all_devices()
+        # Add a small delay to allow processes to terminate
+        start_time = time.time()
+        while any(d["controller"].wda_process for d in self.devices.values()):
+            if time.time() - start_time > 3:
+                self.append_log("[ERROR] Timed out waiting for devices to stop.")
+                break
+            time.sleep(0.1)
         event.accept()

@@ -39,6 +39,17 @@ Hãy làm theo thứ tự:
 sudo service usbmuxd restart
 ./scripts/setup_udev.sh
 
+=== CÔNG CỤ CHẨN ĐOÁN TỰ ĐỘNG ===
+Nếu bạn gặp lỗi kết nối, hãy chạy script sau để tìm nguyên nhân:
+   chmod +x ./scripts/diagnose_usb.sh
+   ./scripts/diagnose_usb.sh
+
+=== QUY TRÌNH KẾT NỐI CHUẨN (NẾU BỊ LỖI) ===
+1. Windows (PowerShell): usbipd attach --wsl --busid <BUSID>
+2. Ubuntu: lsusb (Phải thấy Apple Device)
+3. Ubuntu: sudo service usbmuxd restart (BẮT BUỘC chạy sau khi attach)
+4. Ubuntu: ./scripts/diagnose_usb.sh (Để kiểm tra lần cuối)
+
 === KHẮC PHỤC LỖI "There is no WSL 2 distribution running" ===
 Lỗi này xuất hiện khi WSL (Ubuntu) đang tắt hoặc ngủ đông.
 Cách sửa:

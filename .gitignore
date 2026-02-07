@@ -1,2 +1,11 @@
 devices.json
 settings.py
+# Python
+venv/
+venv_wsl/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
